@@ -1,0 +1,78 @@
+plugins {
+    id 'java-library'
+    id 'java-gradle-plugin'
+    id 'org.springframework.boot' version '3.2.0' apply false
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.tripdeva'
+version = '0.0.1'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+    }
+}
+
+// REST Docs 설정
+ext {
+    snippetsDir = file('build/generated-snippets')
+    openApiOutputDir = file('build/api-spec')
+}
+
+dependencies {
+    // Spring Boot & Web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+
+    // Spring REST Docs - 다른 모듈에서 사용할 수 있도록 api로 노출
+    api 'org.springframework.restdocs:spring-restdocs-mockmvc'
+    
+    // SpringDoc OpenAPI UI - 다른 모듈에서 사용할 수 있도록 api로 노출
+    api 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
+
+    // JSON 처리
+    implementation 'com.fasterxml.jackson.core:jackson-core'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Spring Security (테스트용)
+    testImplementation 'org.springframework.security:spring-security-test'
+
+    // Validation
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // JUnit 5
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+test {
+    outputs.dir snippetsDir
+    useJUnitPlatform()
+}
+
+// Gradle 플러그인 설정
+gradlePlugin {
+    plugins {
+        openApiPlugin {
+            id = 'com.tripdeva.openapi'
+            implementationClass = 'com.tripdeva.restdocs.gradle.OpenApiPlugin'
+        }
+    }
+}
+
+
+
