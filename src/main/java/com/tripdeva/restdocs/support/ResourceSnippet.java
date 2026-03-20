@@ -2,6 +2,10 @@ package com.tripdeva.restdocs.support;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.restdocs.headers.HeaderDescriptor;
+import org.springframework.restdocs.headers.HeaderDocumentation;
+import org.springframework.restdocs.mockmvc.MockMvcRestDocumentation;
+import org.springframework.restdocs.mockmvc.RestDocumentationResultHandler;
 import org.springframework.restdocs.operation.Operation;
 import org.springframework.restdocs.payload.FieldDescriptor;
 import org.springframework.restdocs.payload.JsonFieldType;
@@ -61,6 +65,8 @@ public class ResourceSnippet {
 		private FieldDescriptor[] responseFields;
 		private ParameterDescriptor[] queryParameters;
 		private ParameterDescriptor[] pathParameters;
+		private HeaderDescriptor[] requestHeaders;
+		private HeaderDescriptor[] responseHeaders;
 
 		public ResourceBuilder tag(String tag) {
 			this.tag = tag;
@@ -121,6 +127,16 @@ public class ResourceSnippet {
 			return this;
 		}
 
+		public ResourceBuilder requestHeaders(HeaderDescriptor... headers) {
+			this.requestHeaders = headers;
+			return this;
+		}
+
+		public ResourceBuilder responseHeaders(HeaderDescriptor... headers) {
+			this.responseHeaders = headers;
+			return this;
+		}
+
 		/**
 		 * ResourceBuilder를 REST Docs snippet들로 변환
 		 *
@@ -154,6 +170,16 @@ public class ResourceSnippet {
 			// 경로 파라미터가 있으면 추가
 			if (pathParameters != null && pathParameters.length > 0) {
 				snippets.add(RequestDocumentation.pathParameters(pathParameters));
+			}
+
+			// 요청 헤더가 있으면 추가
+			if (requestHeaders != null && requestHeaders.length > 0) {
+				snippets.add(HeaderDocumentation.requestHeaders(requestHeaders));
+			}
+
+			// 응답 헤더가 있으면 추가
+			if (responseHeaders != null && responseHeaders.length > 0) {
+				snippets.add(HeaderDocumentation.responseHeaders(responseHeaders));
 			}
 
 			return snippets.toArray(new org.springframework.restdocs.snippet.Snippet[0]);
@@ -331,6 +357,28 @@ public class ResourceSnippet {
 	 */
 	public static TypedParameterDescriptor parameterWithName(String name) {
 		return new TypedParameterDescriptor(name);
+	}
+
+	// --- Static delegate methods for import simplification ---
+
+	public static FieldDescriptor fieldWithPath(String path) {
+		return PayloadDocumentation.fieldWithPath(path);
+	}
+
+	public static FieldDescriptor subsectionWithPath(String path) {
+		return PayloadDocumentation.subsectionWithPath(path);
+	}
+
+	public static RestDocumentationResultHandler document(String identifier, Snippet... snippets) {
+		return MockMvcRestDocumentation.document(identifier, snippets);
+	}
+
+	public static RestDocumentationResultHandler document(String identifier, ResourceBuilder resourceBuilder) {
+		return MockMvcRestDocumentation.document(identifier, resourceBuilder.build());
+	}
+
+	public static HeaderDescriptor headerWithName(String name) {
+		return HeaderDocumentation.headerWithName(name);
 	}
 
 	// JsonFieldType constants for convenience

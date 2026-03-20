@@ -101,6 +101,11 @@ public class RequestBodyToParametersConverter {
      * 특정 operation의 Request Body를 Parameters로 변환
      */
     private void processOperationForRequestBodyConversion(String pathName, String method, ObjectNode operationNode, ObjectNode rootNode) {
+        // POST, PUT, PATCH는 requestBody가 정상적인 위치이므로 변환 대상이 아님
+        if ("post".equals(method) || "put".equals(method) || "patch".equals(method)) {
+            return;
+        }
+
         JsonNode requestBodyNode = operationNode.get("requestBody");
         if (requestBodyNode == null || !requestBodyNode.isObject()) {
             return; // Request Body가 없으면 변환할 필요 없음
@@ -225,7 +230,7 @@ public class RequestBodyToParametersConverter {
         
         // 기본 parameter 정보
         parameterNode.put("name", propertyName);
-        parameterNode.put("in", "formData"); // Request Body 필드를 formData parameter로 변환
+        parameterNode.put("in", "query"); // Request Body 필드를 query parameter로 변환 (OpenAPI 3.0)
         
         // 필수 여부 확인
         boolean isRequired = false;

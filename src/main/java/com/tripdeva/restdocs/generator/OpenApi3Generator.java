@@ -12,9 +12,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -67,10 +65,6 @@ public class OpenApi3Generator {
                 } else {
                     // 프로젝트 루트 디렉토리를 기준으로 상대 경로 해결
                     String projectRoot = System.getProperty("user.dir");
-                    // core-api에서 실행 중이면 상위 디렉토리로 이동
-                    if (projectRoot.endsWith("core-api")) {
-                        projectRoot = new File(projectRoot).getParentFile().getParent();
-                    }
                     snippetsDirFile = new File(projectRoot, snippetPath);
                 }
                 
@@ -155,11 +149,14 @@ public class OpenApi3Generator {
                 return;
             }
 
+            // path-parameters.adoc가 있으면 path를 템플릿화
+            String resolvedPath = templatizePath(operationDir, requestInfo.path);
+
             // 해당 path가 이미 존재하는지 확인
-            ObjectNode pathItemNode = (ObjectNode) pathsNode.get(requestInfo.path);
+            ObjectNode pathItemNode = (ObjectNode) pathsNode.get(resolvedPath);
             if (pathItemNode == null) {
                 pathItemNode = objectMapper.createObjectNode();
-                pathsNode.set(requestInfo.path, pathItemNode);
+                pathsNode.set(resolvedPath, pathItemNode);
             }
 
             // operation 정보 생성
@@ -172,11 +169,56 @@ public class OpenApi3Generator {
     }
 
     /**
+     * path-parameters.adoc의 파라미터 이름으로 경로를 템플릿화
+     * 예: /api/users/1 + path param "id" → /api/users/{id}
+     */
+    private String templatizePath(File operationDir, String path) {
+        File pathParamsFile = new File(operationDir, "path-parameters.adoc");
+        if (!pathParamsFile.exists()) {
+            return path;
+        }
+
+        try {
+            List<String> lines = Files.readAllLines(pathParamsFile.toPath());
+            List<String> paramNames = new ArrayList<>();
+            for (String line : lines) {
+                line = line.trim();
+                if (line.startsWith("|`+") && line.endsWith("+`")) {
+                    paramNames.add(line.substring(3, line.length() - 2).trim());
+                }
+            }
+
+            if (paramNames.isEmpty()) {
+                return path;
+            }
+
+            // 경로의 마지막 세그먼트부터 역순으로 치환
+            String[] segments = path.split("/");
+            int paramIdx = paramNames.size() - 1;
+
+            for (int i = segments.length - 1; i >= 0 && paramIdx >= 0; i--) {
+                String segment = segments[i];
+                if (segment.isEmpty()) continue;
+                // 숫자 또는 UUID 등 동적 값으로 보이면 치환
+                if (segment.matches("\\d+") || segment.matches("[a-f0-9-]{36}") || segment.matches("[a-f0-9]{24}")) {
+                    segments[i] = "{" + paramNames.get(paramIdx) + "}";
+                    paramIdx--;
+                }
+            }
+
+            return String.join("/", segments);
+        } catch (IOException e) {
+            log.warn("Failed to read path-parameters.adoc for path templating in {}", operationDir.getName());
+            return path;
+        }
+    }
+
+    /**
      * HTTP 요청 정보 파싱
      */
     private HttpRequestInfo parseHttpRequest(File httpRequestFile) throws IOException {
         List<String> lines = Files.readAllLines(httpRequestFile.toPath());
-        
+
         for (String line : lines) {
             line = line.trim();
             if (line.startsWith("[source,http,options")) {
@@ -194,6 +236,11 @@ public class OpenApi3Generator {
             if (parts.length >= 2) {
                 String method = parts[0].toUpperCase();
                 String path = parts[1];
+                // query string 제거 — OpenAPI에서는 path와 query를 분리
+                int queryIdx = path.indexOf('?');
+                if (queryIdx >= 0) {
+                    path = path.substring(0, queryIdx);
+                }
                 return new HttpRequestInfo(method, path);
             }
         }
@@ -224,10 +271,11 @@ public class OpenApi3Generator {
         tags.add(metadata.tag != null ? metadata.tag : extractTag(operationDir.getName()));
         operationNode.set("tags", tags);
 
-        // parameters 처리
+        // parameters 처리 (query, path, header)
         ArrayNode parameters = objectMapper.createArrayNode();
         addQueryParameters(operationDir, parameters);
         addPathParameters(operationDir, parameters);
+        addRequestHeaders(operationDir, parameters);
         if (!parameters.isEmpty()) {
             operationNode.set("parameters", parameters);
         }
@@ -249,32 +297,19 @@ public class OpenApi3Generator {
 
     /**
      * 요청 파라미터 추가 (query parameters)
+     * REST Docs 3.x: query-parameters.adoc (2컬럼: Parameter|Description, 3줄씩)
+     * REST Docs 2.x: request-parameters.adoc
      */
     private void addQueryParameters(File operationDir, ArrayNode parameters) {
-        File requestParamsFile = new File(operationDir, "request-parameters.adoc");
+        File requestParamsFile = new File(operationDir, "query-parameters.adoc");
+        if (!requestParamsFile.exists()) {
+            requestParamsFile = new File(operationDir, "request-parameters.adoc");
+        }
         if (requestParamsFile.exists()) {
             try {
-                List<String> lines = Files.readAllLines(requestParamsFile.toPath());
-                for (String line : lines) {
-                    if (line.startsWith("|") && line.contains("|")) {
-                        String[] parts = line.split("\\|");
-                        if (parts.length >= 4) {
-                            ObjectNode param = objectMapper.createObjectNode();
-                            param.put("name", parts[1].trim());
-                            param.put("in", "query");
-                            param.put("description", parts[3].trim());
-                            param.put("required", !parts[2].toLowerCase().contains("optional"));
-                            
-                            ObjectNode schema = objectMapper.createObjectNode();
-                            schema.put("type", parseFieldType(parts[2]));
-                            param.set("schema", schema);
-                            
-                            parameters.add(param);
-                        }
-                    }
-                }
+                parseParameterAdoc(requestParamsFile, "query", parameters);
             } catch (IOException e) {
-                log.warn("Failed to read request-parameters.adoc in {}", operationDir.getName());
+                log.warn("Failed to read query/request-parameters.adoc in {}", operationDir.getName());
             }
         }
     }
@@ -286,27 +321,67 @@ public class OpenApi3Generator {
         File pathParamsFile = new File(operationDir, "path-parameters.adoc");
         if (pathParamsFile.exists()) {
             try {
-                List<String> lines = Files.readAllLines(pathParamsFile.toPath());
-                for (String line : lines) {
-                    if (line.startsWith("|") && line.contains("|")) {
-                        String[] parts = line.split("\\|");
-                        if (parts.length >= 3) {
-                            ObjectNode param = objectMapper.createObjectNode();
-                            param.put("name", parts[1].trim());
-                            param.put("in", "path");
-                            param.put("description", parts[2].trim());
-                            param.put("required", true);
-                            
-                            ObjectNode schema = objectMapper.createObjectNode();
-                            schema.put("type", "string");
-                            param.set("schema", schema);
-                            
-                            parameters.add(param);
-                        }
-                    }
-                }
+                parseParameterAdoc(pathParamsFile, "path", parameters);
             } catch (IOException e) {
                 log.warn("Failed to read path-parameters.adoc in {}", operationDir.getName());
+            }
+        }
+    }
+
+    /**
+     * 요청 헤더 추가 (OpenAPI parameters with "in": "header")
+     */
+    private void addRequestHeaders(File operationDir, ArrayNode parameters) {
+        File headersFile = new File(operationDir, "request-headers.adoc");
+        if (headersFile.exists()) {
+            try {
+                parseParameterAdoc(headersFile, "header", parameters);
+            } catch (IOException e) {
+                log.warn("Failed to read request-headers.adoc in {}", operationDir.getName());
+            }
+        }
+    }
+
+    /**
+     * REST Docs 파라미터 adoc 파일 파싱 (query-parameters, path-parameters, request-parameters 공통)
+     * REST Docs 3.x 형식: 2줄씩 (이름 행, 설명 행)
+     *   |`+name+`
+     *   |설명
+     */
+    private void parseParameterAdoc(File adocFile, String inLocation, ArrayNode parameters) throws IOException {
+        List<String> lines = Files.readAllLines(adocFile.toPath());
+        String currentName = null;
+
+        for (String line : lines) {
+            line = line.trim();
+
+            // 헤더, 구분선 무시
+            if (line.equals("|===") || line.isEmpty() || line.startsWith("|Parameter") || line.startsWith("|Name")) {
+                continue;
+            }
+
+            // 이름 행: |`+paramName+`
+            if (line.startsWith("|`+") && line.endsWith("+`")) {
+                currentName = line.substring(3, line.length() - 2).trim();
+                continue;
+            }
+
+            // 설명 행: |설명 텍스트
+            if (currentName != null && line.startsWith("|")) {
+                String description = line.substring(1).trim();
+
+                ObjectNode param = objectMapper.createObjectNode();
+                param.put("name", currentName);
+                param.put("in", inLocation);
+                param.put("description", description);
+                param.put("required", "path".equals(inLocation));
+
+                ObjectNode schema = objectMapper.createObjectNode();
+                schema.put("type", "string");
+                param.set("schema", schema);
+
+                parameters.add(param);
+                currentName = null;
             }
         }
     }
@@ -425,9 +500,11 @@ public class OpenApi3Generator {
     private ObjectNode createResponses(File operationDir, ObjectNode schemasNode) {
         ObjectNode responses = objectMapper.createObjectNode();
 
-        // 기본 200 응답
-        ObjectNode response200 = objectMapper.createObjectNode();
-        response200.put("description", "성공");
+        // http-response.adoc에서 실제 상태코드 추출
+        String statusCode = extractResponseStatusCode(operationDir);
+
+        ObjectNode responseNode = objectMapper.createObjectNode();
+        responseNode.put("description", "성공");
 
         // response-fields.adoc가 있으면 처리
         File responseFieldsFile = new File(operationDir, "response-fields.adoc");
@@ -441,36 +518,31 @@ public class OpenApi3Generator {
                 String currentFieldType = null;
                 String currentDescription = null;
                 int lineIndex = 0;
-                
+
                 for (String line : lines) {
                     line = line.trim();
-                    
+
                     // 헤더나 구분선 무시
                     if (line.equals("|===") || line.equals("|Path|Type|Description") || line.isEmpty()) {
                         continue;
                     }
-                    
+
                     if (lineIndex == 0 && line.startsWith("|`+") && line.endsWith("+`")) {
-                        // 필드명 라인 (예: |`+success+`)
                         currentFieldName = line.substring(3, line.length() - 2).trim();
                         lineIndex = 1;
                     } else if (lineIndex == 1 && line.startsWith("|`+") && line.endsWith("+`")) {
-                        // 타입 라인 (예: |`+Boolean+`)
                         currentFieldType = line.substring(3, line.length() - 2).trim();
                         lineIndex = 2;
                     } else if (lineIndex == 2 && line.startsWith("|")) {
-                        // 설명 라인 (예: |성공 여부)
                         currentDescription = line.substring(1).trim();
-                        
-                        // 3개 정보가 모두 모이면 property 생성
+
                         if (currentFieldName != null && currentFieldType != null && currentDescription != null) {
                             ObjectNode property = objectMapper.createObjectNode();
                             property.put("type", parseFieldType(currentFieldType));
                             property.put("description", currentDescription);
-                            
+
                             properties.set(currentFieldName, property);
-                            
-                            // 초기화
+
                             currentFieldName = null;
                             currentFieldType = null;
                             currentDescription = null;
@@ -492,7 +564,7 @@ public class OpenApi3Generator {
                     schemaRef.put("$ref", "#/components/schemas/" + schemaName);
                     mediaType.set("schema", schemaRef);
                     content.set("application/json", mediaType);
-                    response200.set("content", content);
+                    responseNode.set("content", content);
                 }
 
             } catch (IOException e) {
@@ -500,8 +572,87 @@ public class OpenApi3Generator {
             }
         }
 
-        responses.set("200", response200);
+        // response-headers.adoc가 있으면 처리
+        ObjectNode responseHeaders = parseResponseHeaders(operationDir);
+        if (responseHeaders != null) {
+            responseNode.set("headers", responseHeaders);
+        }
+
+        responses.set(statusCode, responseNode);
         return responses;
+    }
+
+    /**
+     * response-headers.adoc 파싱
+     */
+    private ObjectNode parseResponseHeaders(File operationDir) {
+        File headersFile = new File(operationDir, "response-headers.adoc");
+        if (!headersFile.exists()) {
+            return null;
+        }
+
+        try {
+            List<String> lines = Files.readAllLines(headersFile.toPath());
+            ObjectNode headers = objectMapper.createObjectNode();
+            String currentName = null;
+
+            for (String line : lines) {
+                line = line.trim();
+                if (line.equals("|===") || line.isEmpty() || line.startsWith("|Name")) {
+                    continue;
+                }
+                if (line.startsWith("|`+") && line.endsWith("+`")) {
+                    currentName = line.substring(3, line.length() - 2).trim();
+                    continue;
+                }
+                if (currentName != null && line.startsWith("|")) {
+                    String description = line.substring(1).trim();
+                    ObjectNode headerNode = objectMapper.createObjectNode();
+                    headerNode.put("description", description);
+                    ObjectNode schema = objectMapper.createObjectNode();
+                    schema.put("type", "string");
+                    headerNode.set("schema", schema);
+                    headers.set(currentName, headerNode);
+                    currentName = null;
+                }
+            }
+
+            return headers.isEmpty() ? null : headers;
+        } catch (IOException e) {
+            log.warn("Failed to read response-headers.adoc in {}", operationDir.getName());
+            return null;
+        }
+    }
+
+    /**
+     * http-response.adoc에서 실제 HTTP 상태코드 추출
+     */
+    private String extractResponseStatusCode(File operationDir) {
+        File httpResponseFile = new File(operationDir, "http-response.adoc");
+        if (!httpResponseFile.exists()) {
+            return "200";
+        }
+
+        try {
+            List<String> lines = Files.readAllLines(httpResponseFile.toPath());
+            for (String line : lines) {
+                line = line.trim();
+                // HTTP/1.1 201 Created 형태의 라인 탐색
+                if (line.startsWith("HTTP/") && line.contains(" ")) {
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 2) {
+                        String code = parts[1];
+                        if (code.matches("\\d{3}")) {
+                            return code;
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Failed to read http-response.adoc in {}", operationDir.getName());
+        }
+
+        return "200";
     }
 
     /**
@@ -511,7 +662,8 @@ public class OpenApi3Generator {
         fieldType = fieldType.toLowerCase().trim();
         
         if (fieldType.contains("string")) return "string";
-        if (fieldType.contains("number") || fieldType.contains("integer")) return "integer";
+        if (fieldType.contains("integer")) return "integer";
+        if (fieldType.contains("number")) return "number";
         if (fieldType.contains("boolean")) return "boolean";
         if (fieldType.contains("array")) return "array";
         if (fieldType.contains("object")) return "object";
@@ -615,16 +767,14 @@ public class OpenApi3Generator {
                     continue;
                 }
 
-                // HTTP body 영역에서 JSON 라인 찾기
+                // HTTP body 영역에서 JSON 라인 찾기 (멀티라인 지원)
                 if (inBody) {
                     String trimmed = line.trim();
-                    // JSON으로 보이는 라인 (중괄호로 시작하고 끝남)
-                    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-                        jsonBody.append(trimmed);
-                        break; // 한 줄 JSON이므로 바로 종료
-                    } else if (trimmed.equals("----")) {
-                        // adoc 구분자를 만나면 종료
+                    if (trimmed.equals("----")) {
                         break;
+                    }
+                    if (!trimmed.isEmpty()) {
+                        jsonBody.append(trimmed);
                     }
                 }
             }
@@ -641,43 +791,6 @@ public class OpenApi3Generator {
         return null;
     }
 
-    /**
-     * optional-fields.yml 파일에서 optional 필드 정보 읽기
-     */
-    private Set<String> readOptionalFields(File operationDir) {
-        File optionalFieldsFile = new File(operationDir, "optional-fields.yml");
-        if (!optionalFieldsFile.exists()) {
-            return new HashSet<>();
-        }
-
-        try {
-            List<String> lines = Files.readAllLines(optionalFieldsFile.toPath());
-            Set<String> optionalFields = new HashSet<>();
-            boolean inOptionalSection = false;
-
-            for (String line : lines) {
-                if (line.trim().equals("optional_fields:")) {
-                    inOptionalSection = true;
-                    continue;
-                }
-                
-                if (inOptionalSection && line.startsWith("  - ")) {
-                    String fieldName = line.substring(4).trim();
-                    optionalFields.add(fieldName);
-                } else if (inOptionalSection && !line.startsWith("  ")) {
-                    // 다른 섹션이 시작되면 optional 섹션 끝
-                    break;
-                }
-            }
-
-            log.debug("Optional fields found in {}: {}", operationDir.getName(), optionalFields);
-            return optionalFields;
-
-        } catch (IOException e) {
-            log.warn("Failed to read optional-fields.yml in {}", operationDir.getName());
-            return new HashSet<>();
-        }
-    }
 
 	/**
 	 * 메타데이터 정보 클래스

@@ -1,0 +1,51 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.0'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.tripdeva'
+version = '0.0.1'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.restdocs:spring-restdocs-mockmvc'
+    testImplementation(project(':')) {
+        // Exclude springdoc (version incompatible with Spring Boot 3.2) — only needed at runtime with Swagger UI
+        exclude group: 'org.springdoc'
+    }
+}
+
+test {
+    outputs.dir file('build/generated-snippets')
+    useJUnitPlatform()
+
+    // Exclude Gradle API jars from test classpath (leaked by java-gradle-plugin in root)
+    classpath = classpath.filter { file ->
+        !file.name.contains('gradle-api') && !file.name.contains('gradle-installation-beacon')
+    }
+}
+
+// openapi3 task - REST Docs snippets to OpenAPI 3.0 JSON
+tasks.register('openapi3', JavaExec) {
+    description = 'REST Docs 스니펫을 기반으로 OpenAPI 3.0 JSON 생성'
+    group = 'documentation'
+    dependsOn 'test', 'classes'
+
+    mainClass = 'com.tripdeva.restdocs.generator.OpenApiGeneratorRunner'
+    classpath = sourceSets.main.runtimeClasspath + sourceSets.test.runtimeClasspath
+    args project.file('build/api-spec').absolutePath
+    outputs.dir project.file('build/api-spec')
+}

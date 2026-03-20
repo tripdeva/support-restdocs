@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: test-app
+
+restdocs:
+  title: Test App API
+  version: 1.0.0
+  openapi:
+    server:
+      host: http://localhost
+      port: "8080"
+    snippet-paths:
+      - build/generated-snippets

@@ -55,6 +55,29 @@ public class OpenApiProperties {
          * REST Docs snippets 디렉토리 경로 목록
          */
         private List<String> snippetPaths = List.of("/build/generated-snippets");
+
+        /**
+         * Swagger UI 설정
+         */
+        private Swagger swagger = new Swagger();
+    }
+
+    @Getter
+    @Setter
+    public static class Swagger {
+        /**
+         * Swagger UI 활성화 여부 (기본: true)
+         */
+        private boolean enabled = true;
+
+        /**
+         * openapi3 task가 JSON을 생성하는 디렉토리 (파일 시스템 경로)
+         * 기본: build/api-spec
+         *
+         * 이 디렉토리가 그대로 /api-spec/** URL로 서빙된다.
+         * 예: build/api-spec/openapi3.json → http://localhost:8080/api-spec/openapi3.json
+         */
+        private String outputDir = "build/api-spec";
     }
 
     @Getter
@@ -119,6 +142,28 @@ public class OpenApiProperties {
         return openapi.snippetPaths;
     }
     
+    /**
+     * Swagger UI 활성화 여부
+     */
+    public boolean isSwaggerEnabled() {
+        return openapi.swagger.enabled;
+    }
+
+    /**
+     * Swagger UI가 JSON을 서빙하는 디렉토리 (파일 시스템 경로)
+     */
+    public String getSwaggerOutputDir() {
+        return openapi.swagger.outputDir;
+    }
+
+    /**
+     * Swagger UI가 브라우저에서 로드할 URL 경로 (자동 계산)
+     * 예: /api-spec/openapi3.json
+     */
+    public String getSwaggerUiUrl() {
+        return "/api-spec/" + openapi.outputFileName;
+    }
+
     @PostConstruct
     public void logProperties() {
         log.info("=== OpenAPI Properties Loaded ===");
